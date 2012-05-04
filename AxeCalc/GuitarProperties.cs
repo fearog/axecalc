@@ -24,6 +24,7 @@ using System.Windows.Forms;
 using System.IO;
 using System.Xml;
 using System.Reflection;
+using System.Data;
 
 namespace AxeCalc
 {
@@ -33,7 +34,7 @@ namespace AxeCalc
 
 		[Category( "General" ), Name( "Fret count" ), Description( "Number of frets" )]
 		private int m_iFretCount;
-		[Category( "Scale" ), Name( "Neutral fret" ), Description( "On a multiscale guitar this is the fret that is not angled" ), Visible( "IsMultiScale" )]
+		[Category( "Scale" ), Name( "Neutral fret" ), Description( "On a multiscale guitar this is the fret that is not angled" ), Visible( "MultiScale" )]
 		private int m_iStraightFret;
 
 		[Category( "Scale" ), Name( "Bass scale Length" ), Description( "Distance from nut to bridge of the bass string" )]
@@ -192,7 +193,21 @@ namespace AxeCalc
 		[NoSave]
 		private netDxf.DxfDocument m_currentSaddlePrefab = null;
 
-		private bool IsMultiScale() { return m_fBassScaleLength != m_fTrebleScaleLength; }
+		[NoSave]
+		DataTable m_bassFretChartTable = new DataTable();
+		[NoSave]
+		DataTable m_trebleFretChartTable = new DataTable();
+
+		public DataTable BassFretDataTable
+		{
+			get { return m_bassFretChartTable; }
+		}
+		public DataTable TrebleFretDataTable
+		{
+			get { return m_trebleFretChartTable; }
+		}
+
+		public bool MultiScale { get { return m_fBassScaleLength != m_fTrebleScaleLength; } }
 
 		#region saving and loading
 		public void Save( string strFilename )
@@ -226,7 +241,7 @@ namespace AxeCalc
 		}
 		#endregion
 
-		public GuitarProperties( CustomClass calculatedStuff )
+		public GuitarProperties( AxeCalc app, CustomClass calculatedStuff )
 		{
 			// initialize the prefabs
 			m_saddlePrefabs = new Dictionary<SaddleStyles, netDxf.DxfDocument>();
@@ -294,11 +309,11 @@ namespace AxeCalc
 			//Add( new CustomProperty( this, m_iTestValue ) );
 			AddMarkedUpVariables( this );
 
-			Refresh();
+			Refresh( app );
 		}
 		//---------------------------------------------------------------------
 
-		public void Refresh()
+		public void Refresh( AxeCalc app )
 		{
 			m_tuning.SetupProperties();
 
@@ -309,6 +324,8 @@ namespace AxeCalc
 				m_middlePickup.m_dPerPoleStringSpacing = GetCrossFretboardLine( m_middlePickup.m_dPosition ).length() / ( m_iStringCount - 1 );
 			if( m_neckPickup.m_eStringSpacing == PickupSettings.Spacing.Perfect )
 				m_neckPickup.m_dPerPoleStringSpacing = GetCrossFretboardLine( m_neckPickup.m_dPosition ).length() / ( m_iStringCount - 1 );
+
+			RefreshFretCharts( app );
 
 			// cache the prefab used
 			try
@@ -337,6 +354,106 @@ namespace AxeCalc
 				Add( new CustomProperty( "Aesthetics", "Fretboard block width", "Width of the square fretboard blocks", "SquareBlockWidth", this, false, true ) );
 				Add( new CustomProperty( "Aesthetics", "Fretboard block spacing", "Spacing between blocks & edge of fretboard", "SquareBlockEdgeSpacing", this, false, true ) );
 			}*/
+		}
+		//---------------------------------------------------------------------
+
+		public void RefreshFretCharts( AxeCalc app )
+		{
+			m_bassFretChartTable.Clear();
+			m_bassFretChartTable.Columns.Clear();
+			m_bassFretChartTable.Rows.Clear();
+			m_trebleFretChartTable.Clear();
+			m_trebleFretChartTable.Columns.Clear();
+			m_trebleFretChartTable.Rows.Clear();
+
+			Line2[] fretLines = new Line2[ m_iFretCount + 1 ];
+			for( int i = 0; i <= m_iFretCount; ++i )
+				fretLines[ i ] = GetFretLine( i );
+
+			if( !MultiScale )
+			{
+				m_bassFretChartTable.Columns.Add( "Fret" );
+				m_bassFretChartTable.Columns.Add( "From nut" );
+				m_bassFretChartTable.Columns.Add( "Fret to fret" );
+
+				for( int i = 1; i <= m_iFretCount; ++i )
+				{
+					object[] values = new object[ 3 ];
+					values[ 0 ] = i;
+					values[ 1 ] = ( fretLines[ 0 ].v1.x - fretLines[ i ].v1.x ).ToString( "F3" );
+					values[ 2 ] = ( fretLines[ i - 1 ].v1.x - fretLines[ i ].v1.x ).ToString( "F3" );
+					if( i == 1 )
+						values[ 2 ] += " (nut - 1)";
+					else
+						values[ 2 ] += String.Format( " ({0} - {1})", i-1, i );
+					m_bassFretChartTable.Rows.Add( values );
+				}
+			}
+			else
+			{
+				m_bassFretChartTable.Columns.Add( "Fret" );
+				m_bassFretChartTable.Columns.Add( "From reference" );
+				m_bassFretChartTable.Columns.Add( "Fret to fret" );
+				m_trebleFretChartTable.Columns.Add( "Fret" );
+				m_trebleFretChartTable.Columns.Add( "From reference" );
+				m_trebleFretChartTable.Columns.Add( "Fret to fret" );
+
+				// extend all the lines out to the edges of the blank
+				Line2 blankTopLine = new Line2( 0, app.FretboardBlankWidth / 2, 1000, app.FretboardBlankWidth / 2 );
+				Line2 blankBottomLine = new Line2( 0, -app.FretboardBlankWidth / 2, 1000, -app.FretboardBlankWidth / 2 );
+				for( int i = 0; i <= m_iFretCount; ++i )
+				{
+					fretLines[ i ].extendToInfinite( blankTopLine );
+					fretLines[ i ].extendToInfinite( blankBottomLine );
+				}
+
+				double dReferenceX = Math.Max( fretLines[ 0 ].v1.x, fretLines[ 0 ].v2.x );
+				// bass side
+				for( int i = 0; i <= m_iFretCount; ++i )
+				{
+					object[] values = new object[ 3 ];
+					values[ 1 ] = ( dReferenceX - fretLines[ i ].v1.x ).ToString( "F3" );
+
+					if( i == 0 )
+					{
+						values[ 0 ] = "nut";
+						values[ 2 ] = ( dReferenceX - fretLines[ i ].v1.x ).ToString( "F3" ) + " (ref - nut)";
+					}
+					else
+					{
+						values[ 0 ] = i;
+						values[ 2 ] = ( fretLines[ i - 1 ].v1.x - fretLines[ i ].v1.x ).ToString( "F3" );
+						if( i == 1 )
+							values[ 2 ] += " (nut - 1)";
+						else
+							values[ 2 ] += String.Format( " ({0} - {1})", i - 1, i );
+					}
+					m_bassFretChartTable.Rows.Add( values );
+				}
+
+				// treble side
+				for( int i = 0; i <= m_iFretCount; ++i )
+				{
+					object[] values = new object[ 3 ];
+					values[ 1 ] = ( dReferenceX - fretLines[ i ].v2.x ).ToString( "F3" );
+
+					if( i == 0 )
+					{
+						values[ 0 ] = "nut";
+						values[ 2 ] = ( dReferenceX - fretLines[ i ].v2.x ).ToString( "F3" ) + " (ref - nut)";
+					}
+					else
+					{
+						values[ 0 ] = i;
+						values[ 2 ] = ( fretLines[ i - 1 ].v2.x - fretLines[ i ].v2.x ).ToString( "F3" );
+						if( i == 1 )
+							values[ 2 ] += " (nut - 1)";
+						else
+							values[ 2 ] += String.Format( " ({0} - {1})", i - 1, i );
+					}
+					m_trebleFretChartTable.Rows.Add( values );
+				}
+			}
 		}
 		//---------------------------------------------------------------------
 
@@ -438,13 +555,13 @@ namespace AxeCalc
 		}
 		//---------------------------------------------------------------------
 
-		[Category( "General" ), Name( "Bridge angle" ), Description( "The angle of the bridge from the vertical" ), Visible( "IsMultiScale" ) ]
+		[Category( "General" ), Name( "Bridge angle" ), Description( "The angle of the bridge from the vertical" ), Visible( "MultiScale" ) ]
 		public double BridgeAngle
 		{
 			get { return 90 + Math.Atan2( bridgeStringLine.v2.y - bridgeStringLine.v1.y, bridgeStringLine.v2.x - bridgeStringLine.v1.x ) * 180.0 / Math.PI; }
 		}
 
-		[Category( "General" ), Name( "Nut angle" ), Description( "The angle of the nut from the vertical" ), Visible( "IsMultiScale" ) ]
+		[Category( "General" ), Name( "Nut angle" ), Description( "The angle of the nut from the vertical" ), Visible( "MultiScale" ) ]
 		public double NutAngle
 		{
 			get { return 90 - Math.Atan2( nutStringLine.v1.y - nutStringLine.v2.y, nutStringLine.v1.x - nutStringLine.v2.x ) * 180.0 / Math.PI; }
@@ -478,6 +595,12 @@ namespace AxeCalc
 		private Line2 GetCrossFretboardLine( double factor )
 		{
 			return new Line2( interpolate( factor, bridgeStringLine.v1, nutStringLine.v1 ), interpolate( factor, bridgeStringLine.v2, nutStringLine.v2 ) );
+		}
+
+		private Line2 GetFretLine( int iFretNumber )
+		{
+			double factor = calculateFret( 1, iFretNumber );
+			return GetCrossFretboardLine( factor );
 		}
 
 		public Line2 GetStringLine( int iStringNumber )
@@ -577,8 +700,7 @@ namespace AxeCalc
 			Line2[] fretLines = new Line2[ m_iFretCount + 1 ];
 			for( int i = 0; i < m_iFretCount + 1; ++i )
 			{
-				double factor = calculateFret( 1, i );
-				fretLines[ i ] = GetCrossFretboardLine( factor );
+				fretLines[ i ] = GetFretLine( i );
 			}
 /*
 			# do constant-spacing based string spacing, to take each string's thickness into account

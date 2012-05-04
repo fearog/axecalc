@@ -82,36 +82,13 @@ namespace AxeCalc
 			m_iIdentifier = iIdentifier;
 		}
 
-		public bool Execute( object o )
-		{
-			// do the callback on the object in question
-			MethodInfo method = o.GetType().GetMethods( BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance ).Single( v => v.Name == m_strCallbackName );
-			if( method != null )
-			{
-				ParameterInfo[] parms = method.GetParameters();
-				if( m_iIdentifier == -1 )
-				{
-					object returnValue = method.Invoke( o, null );
-					return ( bool )returnValue;
-				}
-				else
-				{
-					object[] input = new object[ 1 ];
-					input[ 0 ] = m_iIdentifier;
-					object returnValue = method.Invoke( o, input );
-					return ( bool )returnValue;
-				}
-			}
-			return false;
-		}
-
 		public GetValueDelegate GetDelegate( object o )
 		{
 			if( m_bValueSet )
 				return delegate() { return m_value; };
 
-			// do the callback on the object in question
-			MethodInfo method = o.GetType().GetMethods( BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance ).Single( v => v.Name == m_strCallbackName );
+			// find the callback in question
+		/*	MethodInfo method = o.GetType().GetMethods( BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance ).Single( v => v.Name == m_strCallbackName );
 			if( method != null )
 			{
 				ParameterInfo[] parms = method.GetParameters();
@@ -133,7 +110,66 @@ namespace AxeCalc
 						return ( T )returnValue;
 					};
 				}
+			}*/
+
+			// not a method! check parameters
+			MemberInfo[] members = o.GetType().GetMember( m_strCallbackName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance );
+			if( members.Length == 0 )
+			{
+				System.Diagnostics.Debug.Assert( false );
+				return null;
 			}
+
+			System.Diagnostics.Debug.Assert( members.Length == 1 );
+			MemberInfo member = members[ 0 ];
+			if( member is MethodInfo )
+			{
+				MethodInfo method = member as MethodInfo;
+				ParameterInfo[] parms = method.GetParameters();
+				if( m_iIdentifier == -1 )
+				{
+					return delegate()
+					{
+						object returnValue = method.Invoke( o, null );
+						return ( T )returnValue;
+					};
+				}
+				else
+				{
+					object[] input = new object[ 1 ];
+					input[ 0 ] = m_iIdentifier;
+					return delegate()
+					{
+						object returnValue = method.Invoke( o, input );
+						return ( T )returnValue;
+					};
+				}
+			}
+			else if( member is PropertyInfo )
+			{
+				PropertyInfo property = member as PropertyInfo;
+				System.Diagnostics.Debug.Assert( m_iIdentifier == -1 );
+				return delegate()
+				{
+					object returnValue = property.GetValue( o, null );
+					return ( T )returnValue;
+				};
+			}
+			else if( member is FieldInfo )
+			{
+				FieldInfo field = member as FieldInfo;
+				System.Diagnostics.Debug.Assert( m_iIdentifier == -1 );
+				return delegate()
+				{
+					object returnValue = field.GetValue( o );
+					return ( T )returnValue;
+				};
+			}
+			else
+			{
+			}
+
+			System.Diagnostics.Debug.Assert( false );
 			return null;
 		}
 	}

@@ -32,24 +32,24 @@ namespace AxeCalc
 	{
 		GuitarProperties m_guitar;
 		GraphicsDrawer m_graphicsDrawer;
-		CustomClass m_calculatedStuff;
-		string m_strProjectFilename;
+		CustomClass m_calculatedStuff = new CustomClass();
+		string m_strProjectFilename = "";
 
 		public AxeCalc()
 		{
 			Application.AddMessageFilter( this );
 			InitializeComponent();
 
-			m_strProjectFilename = "";
-			m_calculatedStuff = new CustomClass();
-			m_guitar = new GuitarProperties( m_calculatedStuff );
+			m_guitar = new GuitarProperties( this, m_calculatedStuff );
 			m_graphicsDrawer = new GraphicsDrawer( m_drawingBox.DisplayRectangle );
 			m_properties.SelectedObject = m_guitar;
 			m_calcedProperties.SelectedObject = m_calculatedStuff;
-//			AttributeCollection a = m_properties.It;
 			m_properties.PropertyValueChanged += new PropertyValueChangedEventHandler( m_properties_PropertyValueChanged );
 
 			m_drawingBox.MouseWheel += m_drawingBox_MouseWheel;
+			
+			m_bassFretChart.DataSource = m_guitar.BassFretDataTable;
+			m_trebleFretChart.DataSource = m_guitar.TrebleFretDataTable;
 		}
 
 		private void mainMenu_File_Exit_Click( object sender, EventArgs e )
@@ -79,14 +79,14 @@ namespace AxeCalc
 			m_graphicsDrawer.EndFrame();
 		}
 
-		public void m_properties_PropertyValueChanged( object s, PropertyValueChangedEventArgs e )
+		private void m_properties_PropertyValueChanged( object s, PropertyValueChangedEventArgs e )
 		{
 			RefreshAll();
 		}
 
 		public void RefreshAll()
 		{
-			m_guitar.Refresh();
+			m_guitar.Refresh( this );
 			m_properties.Refresh();
 			m_calcedProperties.Refresh();
 			m_drawingBox.Refresh();
@@ -252,5 +252,163 @@ namespace AxeCalc
 			m_drawingBox.Refresh();
 		}
 
+		public double FretboardBlankWidth
+		{
+			get
+			{
+				return m_dFretboardBlankWidth;
+			}
+		}
+
+		double m_dFretboardBlankWidth = 70;
+		private void m_FretboardBlankWidthChanged( object sender, EventArgs e )
+		{
+			try
+			{
+				m_dFretboardBlankWidth = Double.Parse( m_fretboardBlankWidth.Text );
+			}
+			catch
+			{
+			}
+			m_guitar.RefreshFretCharts( this );
+		}
+
+		private int m_iPageNumber;
+		private void printDocument1_BeginPrint( object sender, System.Drawing.Printing.PrintEventArgs e )
+		{
+			m_iPageNumber = 0;
+		}
+		private void printDocument1_PrintPage( object sender, System.Drawing.Printing.PrintPageEventArgs e )
+		{
+		//	Bitmap bm = new Bitmap( this.m_bassFretChart.Width, this.m_bassFretChart.Height );
+		//	m_bassFretChart.DrawToBitmap( bm, new Rectangle( 0, 0, this.m_bassFretChart.Width, this.m_bassFretChart.Height ) );
+		//	e.Graphics.DrawImage( bm, 0, 0 ); 
+
+			++m_iPageNumber;
+
+			if( m_guitar.MultiScale )
+			{
+			/*	if( m_iPageNumber == 1 )
+				{
+					PrintDataGrid( "Bass Fret Chart", m_bassFretChart, e.MarginBounds, e );
+					e.HasMorePages = true;
+				}
+				else if( m_iPageNumber == 2 )
+					PrintDataGrid( "Treble Fret Chart", m_trebleFretChart, e.MarginBounds, e );*/
+
+				Rectangle halfPage = new Rectangle( e.MarginBounds.X, e.MarginBounds.Y, e.MarginBounds.Width, e.MarginBounds.Height / 2 );
+				PrintDataGrid( "Bass Fret Chart", m_bassFretChart, halfPage, e.Graphics );
+				halfPage.Y += halfPage.Height;
+				PrintDataGrid( "Treble Fret Chart", m_trebleFretChart, halfPage, e.Graphics );
+			}
+			else
+			{
+				PrintDataGrid( "Fret Chart", m_bassFretChart, e.MarginBounds, e.Graphics );
+			}
+		}
+
+		private static void PrintDataGrid( string strTitle, DataGridView grid, Rectangle bounds, Graphics g )
+		{
+			FontFamily fontFamily;
+			try
+			{
+				fontFamily = FontFamily.Families.Single( v => v.Name == "Consolas" );
+			}
+			catch
+			{
+				fontFamily = FontFamily.GenericMonospace;
+			}
+
+			Font titleFont = new Font( fontFamily, 16, FontStyle.Bold );
+			g.DrawString( strTitle, titleFont, Brushes.Black, bounds.Left, bounds.Top );
+			bounds.Y += titleFont.Height;
+			bounds.Height -= titleFont.Height;
+
+			float fMaxFontSize = Math.Min( 13, ( float )bounds.Height / ( float )( grid.RowCount + 1 ) - 8 );
+			Font tempFont = new Font( fontFamily, fMaxFontSize );
+			//e.Graphics.DrawString( textToPrint, printFont, Brushes.Black, 0, 0 );
+			
+			// evenly divide the columns across the screen
+			float fColumnWidth = ( float )bounds.Width / ( float )( grid.ColumnCount );
+			float[] fColumnPositions = new float[ grid.Columns.Count ];
+
+			// make sure no text will go out of its cell
+			float fMaxTextWidth = 0;
+			float[] fMaxColumnTextWidth = new float[ grid.Columns.Count ];
+			for( int i = 0; i < grid.ColumnCount; ++i )
+			{
+				DataGridViewColumn column = grid.Columns[ i ];
+				SizeF size = g.MeasureString( column.Name, tempFont );
+				fMaxColumnTextWidth[ i ] = size.Width;
+				fMaxTextWidth = Math.Max( fMaxColumnTextWidth[ i ], fMaxTextWidth );
+			}
+
+			// go through all cells
+			foreach( DataGridViewRow row in grid.Rows )
+			{
+				for( int i = 0; i < row.Cells.Count; ++i )
+				{
+					DataGridViewCell cell = row.Cells[ i ];
+					SizeF size = g.MeasureString( cell.Value.ToString(), tempFont );
+					fMaxColumnTextWidth[ i ] = Math.Max( fMaxColumnTextWidth[ i ], size.Width );
+					fMaxTextWidth = Math.Max( fMaxColumnTextWidth[ i ], fMaxTextWidth );
+				}
+			}
+
+			if( fMaxTextWidth > fColumnWidth )
+			{
+				// scale down the font
+				fMaxFontSize = fMaxFontSize * fColumnWidth / fMaxTextWidth;
+			}
+
+			Font font = new Font( fontFamily, fMaxFontSize );
+			Font boldFont = new Font( fontFamily, fMaxFontSize, FontStyle.Bold );
+
+			// assign the share of the page width based on the width of the column contents
+			float fTotalColumnContents = fMaxColumnTextWidth.Sum();
+			fColumnPositions[ 0 ] = bounds.Left;
+			for( int i = 1; i < grid.ColumnCount; ++i )
+				fColumnPositions[ i ] = fColumnPositions[ i - 1 ] + fMaxColumnTextWidth[ i - 1 ] * bounds.Width / fTotalColumnContents;
+
+
+			Pen blackPen = new Pen( Brushes.Black );
+
+			// draw column headings and column lines
+			float fGridBottom = bounds.Top + font.Height * ( grid.RowCount + 1 );
+			for( int i = 0; i < grid.ColumnCount; ++i )
+			{
+				DataGridViewColumn column = grid.Columns[ i ];
+				g.DrawString( column.Name, boldFont, Brushes.Black, fColumnPositions[ i ], bounds.Top );
+				g.DrawLine( blackPen, fColumnPositions[ i ], bounds.Top, fColumnPositions[ i ], fGridBottom );
+			}
+			g.DrawLine( blackPen, bounds.Right, bounds.Top, bounds.Right, fGridBottom );
+
+			// draw rows and row lines
+			g.DrawLine( blackPen, bounds.Left, bounds.Top, bounds.Right, bounds.Top );
+			float fHeightUpto = bounds.Top + font.Height;
+			foreach( DataGridViewRow row in grid.Rows )
+			{
+				for( int i = 0; i < row.Cells.Count; ++i )
+				{
+					DataGridViewCell cell = row.Cells[ i ];
+					g.DrawString( cell.Value.ToString(), font, Brushes.Black, fColumnPositions[ i ], fHeightUpto );
+				}
+				g.DrawLine( blackPen, bounds.Left, fHeightUpto, bounds.Right, fHeightUpto );
+				fHeightUpto += font.Height;
+			}
+			g.DrawLine( blackPen, bounds.Left, fHeightUpto, bounds.Right, fHeightUpto );
+		}
+
+		private void m_printFretCharts_Click( object sender, EventArgs e )
+		{
+			PrintDialog d = new PrintDialog();
+			d.Document = printDocument1;
+			if( d.ShowDialog() == DialogResult.OK )
+				printDocument1.Print();
+			
+		/*	PrintPreviewDialog d = new PrintPreviewDialog();
+			d.Document = printDocument1;
+			d.ShowDialog();*/
+		}
 	}
 }
